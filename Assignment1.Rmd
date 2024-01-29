@@ -1,0 +1,240 @@
+---
+title: "Tidycensus Markdown"
+author: "Ziyi Guo"
+date: "Jan 28. 2024"
+output:
+  html_document:
+    code_folding: show
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE, cache = TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(rmarkdown)
+library(sf)
+```
+
+
+### Setup 
+
+Install and Library Packages
+
+```{r setup_packages1, warning = FALSE, eval = FALSE}
+install.packages('tidyverse')
+install.packages('tidycensus')
+install.packages('sf')
+```
+
+
+```{r setup_packages2, warning = FALSE, message = FALSE}
+library(tidyverse)
+library(tidycensus)
+library(sf)
+```
+
+Load census data dictionaries.
+
+```{r load_variables, cache = TRUE}
+
+acs_variable_list.2020 <- load_variables(2020, #year
+                                         "acs5", #five year ACS estimates
+                                         cache = TRUE)
+
+acs_variable_list.2016 <- load_variables(2016, #year
+                                         "acs5", #five year ACS estimates
+                                         cache = TRUE)
+```
+
+
+Create a vector of census variables (choose from the dictionaries)
+
+```{r acs_vars}
+acs_vars <- c("B01001_001E", # ACS total Pop estimate
+              "B25002_001E", # Estimate of total housing units
+              "B25002_003E", # Number of vacant housing units
+              "B19013_001E", # Median HH Income ($)
+              "B02001_002E", # People describing themselves as "white alone"
+              "B06009_006E") # Total graduate or professional degree
+```
+
+Get tract level data for 2020 for all of Philadelphia
+
+```{r get_acs_2020, cache = TRUE, message = FALSE, warning = FALSE}
+acsTractsPHL.2020 <- get_acs(geography = "tract",
+                             year = 2020, 
+                             variables = acs_vars, 
+                             geometry = FALSE, 
+                             state = "PA", 
+                             county = "Philadelphia", 
+                             output = "wide") 
+```
+
+Mutating, selecting and renaming variables
+
+```{r do_some_dplyr, cache = TRUE}
+acsTractsPHL.2020 <- acsTractsPHL.2020 %>%
+  dplyr::select (GEOID, NAME, all_of(acs_vars))
+
+acsTractsPHL.2020 <- acsTractsPHL.2020 %>%
+  rename (total_pop.2020 = B01001_001E,
+          total_HU.2020 = B25002_001E,
+          total_vacant.2020 = B25002_003E,
+          med_HH_Income.2020 = B19013_001E,
+          total_White.2020 = B02001_002E,
+          total_GradDeg.2020 = B06009_006E)
+
+acsTractsPHL.2020 <- acsTractsPHL.2020 %>%
+  mutate(vacancyPct.2020 = total_vacant.2020/total_HU.2020,
+         pctWhite.2020   = total_White.2020/total_pop.2020)
+```
+
+get 2016 data by pipe %>%
+
+```{r get_acs_2016, cache = TRUE, message = FALSE}
+acsTractsPHL.2016 <- get_acs(geography = "tract",
+                             year = 2016, 
+                             variables = acs_vars,
+                             geometry = FALSE,
+                             state = "PA", 
+                             county = "Philadelphia",
+                             output = "wide") %>%
+  dplyr::select (GEOID, NAME, all_of(acs_vars)) %>% 
+  rename (total_pop.2016 = B01001_001E,
+          total_HU.2016 = B25002_001E,
+          total_vacant.2016 = B25002_003E,
+          med_HH_Income.2016 = B19013_001E,
+          total_White.2016 = B02001_002E,
+          total_GradDeg.2016 = B06009_006E) %>%
+  mutate(vacancyPct.2016 = total_vacant.2016/total_HU.2016,
+         pctWhite.2016 = total_White.2016/total_pop.2016)
+```
+
+Joining data (2016 & 2020)
+
+
+```{r left_join_tracts, cache = TRUE}
+allACS <- left_join(acsTractsPHL.2016, acsTractsPHL.2020,
+                    by= c("GEOID"))
+```
+
+Comparing Geographies - Identify "My Airy" area
+
+```{r myTracts, cache = TRUE}
+
+myTracts <- c("42101023500", 
+              "42101023600", 
+              "42101023700", 
+              "42101025300", 
+              "42101025400",
+              "42101025500", 
+              "42101025600", 
+              "42101038800")
+
+allACS <- allACS %>%
+  mutate(mtAiry = ifelse(GEOID %in% myTracts, "MT AIRY", "REST OF PHILADELPHIA"))
+```
+
+
+### Assignment Part 1 
+
+Mt.Airy compared with rest of Philadelphia, in terms of Vacant Housing
+
+```{r plot Vacant HU, cache = TRUE, message = FALSE, warning = FALSE}
+
+ggplot(allACS)+
+  geom_point(aes(x = total_vacant.2016, 
+                 y = total_vacant.2020,
+                 color = mtAiry))+
+  geom_abline(intercept = 0, slope = 1)+
+  labs(
+    title = "2020 vacant housing units as a Function of 2016 vacant housing unites per tract",
+    caption = "Data: US Census Bureau, ACS 5-year estimates",
+    x="vacant housing unites 2016", 
+    y="vacant housing unites 2020")+
+  theme_minimal()
+
+```
+
+This indicates a positive correlation between the number of vacant housing units in 2016 and those in 2020 per tract, suggesting that tracts with more vacancies in 2016 tended to also have more vacancies in 2020. Also, Mt. Airy area fall along or close to the trend line, indicating that the change in the number of vacant housing units from 2016 to 2020 in Mt. Airy is consistent with the overall city trend.
+
+
+### Assignment Part 2 
+
+Get Simple Features Objects for 2016 Philadelphia (Geometry = True)
+
+```{r sf objects, eval=FALSE, message=FALSE, warning=FALSE, cache=TRUE, paged.print=FALSE}
+
+acsTracts.2016.sf <- get_acs(geography = "tract",
+                             year = 2016, 
+                             variables = acs_vars, 
+                             geometry = TRUE, 
+                             state = "PA", 
+                             county = "Philadelphia", 
+                             output = "wide") %>% 
+  dplyr::select (GEOID, NAME, all_of(acs_vars)) %>%
+  rename (total_pop.2016 = B01001_001E,
+          total_HU.2016 = B25002_001E,
+          total_vacant.2016 = B25002_003E,
+          med_HH_Income.2016 = B19013_001E,
+          total_White.2016 = B02001_002E,
+          total_GradDeg.2016 = B06009_006E) %>%
+  mutate(vacancyPct.2016 = total_vacant.2016/total_HU.2016,
+         pctWhite.2016 = total_White.2016/total_pop.2016) %>%
+  mutate(mtAiry = ifelse(GEOID %in% myTracts, "MT AIRY", "REST OF PHILADELPHIA"))
+```
+
+Plot map
+
+```{r pctVacant, cache = TRUE, message = FALSE, warning = FALSE}
+
+ggplot()+
+  geom_sf(data = acsTracts.2016.sf, aes(fill = vacancyPct.2016),
+          color = "transparent")+
+  geom_sf(data = acsTracts.2016.sf %>%
+            filter(mtAiry == "MT AIRY") %>%
+             st_union(),
+          color = "white",
+          fill = "transparent")+
+  labs(
+    title = "Percentage of vacant housing units by tract",
+    subtitle = "",
+    caption = "Data: US Census Bureau, ACS 5-year estimates") + theme_void()
+```
+
+This map illustrates the distribution pattern of vacant housing units, indicating that the Mt. Airy area boasts a comparatively lower vacancy rate than many other neighborhoods in Philadelphia.
+
+### Assignment part 3
+
+Library "Kable" Packages
+
+```{r kable table, cache = TRUE, message = FALSE, warning = FALSE}
+
+library(knitr)
+library(kableExtra)
+
+```
+
+Summarize Tables
+
+```{r summarize, cache = TRUE, message = FALSE, warning = FALSE}
+
+summaryVacantHU <- allACS %>%
+  group_by(mtAiry) %>%
+  summarize(mean_VacantHU = mean(total_vacant.2020, na.rm = TRUE))
+
+```
+
+Output the "Kable" Table
+
+```{r output, cache = TRUE, message = FALSE, warning = FALSE}
+summaryVacantHU %>%
+  kbl(caption = "Mean number of vacant housing units per tract for Mt. Airy vs. the rest of Philadelphia in 2020") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+This table reveals that, as of 2020, the Mt. Airy area maintained a lower rate of vacant housing units compared to the broader Philadelphia region.
